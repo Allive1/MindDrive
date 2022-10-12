@@ -1,7 +1,14 @@
 from cortex import Cortex
+import json
+from numpy import mean
+import queue
+from tello import Tello
+
+q1 = queue.Queue(30)
+current_avg = 0
 
 
-class Subcribe():
+class Subcribe:
     """
     A class to subscribe data stream.
     Attributes
@@ -43,6 +50,12 @@ class Subcribe():
         self.c.bind(new_met_data=self.on_new_met_data)
         self.c.bind(new_pow_data=self.on_new_pow_data)
         self.c.bind(inform_error=self.on_inform_error)
+
+        """
+        Constructs tello client to connect to drone
+        """
+        self.drone = Tello()
+        self.grounded_flag = True
 
     def start(self, streams, headsetId=''):
         """
@@ -152,7 +165,37 @@ class Subcribe():
         For example: {'mot': [33, 0, 0.493859, 0.40625, 0.46875, -0.609375, 0.968765, 0.187503, -0.250004, -76.563667, -19.584995, 38.281834], 'time': 1627457508.2588}
         """
         data = kwargs.get('data')
-        print('motion data: {}'.format(data))
+        # print('motion data: {}'.format(data))
+        jtopy = json.dumps(data)
+        data_json = json.loads(jtopy)
+        # print(data_json)
+
+        # using X, Y, Z axis of the accelerometer
+        if data_json['mot'][0] == 31:
+            print('set: {} {} {}'.format(data_json['mot'][6], data_json['mot'][7], data_json['mot'][8]))
+
+        if q1.full():
+            item1 = q1.get()
+
+        q1.put(data_json['mot'][7])
+        li = list(q1.queue)
+        global current_avg
+        current_avg = mean(li)
+        rounded_avg = round(current_avg, 2)
+        print("The average is ", rounded_avg)
+
+        # if head has been held up for awhile
+        if rounded_avg > 0.00:
+            # if grounded, take off
+            if self.grounded_flag:
+                self.drone.send_command('takeoff')
+                self.grounded_flag = False
+        # if head held down
+        elif rounded_avg < 0.00:
+            # if airborne, land
+            if not self.grounded_flag:
+                self.drone.send_command('land')
+                self.grounded_flag = True
 
     def on_new_dev_data(self, *args, **kwargs):
         """
@@ -223,7 +266,8 @@ def main():
     s = Subcribe(your_app_client_id, your_app_client_secret)
 
     # list data streams
-    streams = ['eeg', 'mot', 'met', 'pow']
+    # streams = ['eeg', 'mot', 'met', 'pow']
+    streams = ['mot']
     s.start(streams)
 
 
