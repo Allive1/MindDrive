@@ -3,10 +3,21 @@ import json
 from numpy import mean
 import queue
 from tello import Tello
+import time
+import threading
+import datetime
 
-q1 = queue.Queue(30)
-current_avg = 0
+# x_queue = queue.Queue(30)
+# y_queue = queue.Queue(30)
+# z_queue = queue.Queue(30)
+# current_x_avg = 0
+# current_y_avg = 0
+# current_z_avg = 0
 
+def flag_switch(event, flag):
+    # event.wait(2.0)
+    time.sleep(2.0)
+    flag = True
 
 class Subcribe:
     """
@@ -35,7 +46,7 @@ class Subcribe:
         To handle band power data emitted from Cortex
     """
 
-    def __init__(self, app_client_id, app_client_secret, **kwargs):
+    def __init__(self, app_client_id, app_client_secret, event, **kwargs):
         """
         Constructs cortex client and bind a function to handle subscribed data streams
         If you do not want to log request and response message , set debug_mode = False. The default is True
@@ -50,12 +61,29 @@ class Subcribe:
         self.c.bind(new_met_data=self.on_new_met_data)
         self.c.bind(new_pow_data=self.on_new_pow_data)
         self.c.bind(inform_error=self.on_inform_error)
+        self.event = event
+
+        self.x_queue = queue.Queue(30)
+        self.y_queue = queue.Queue(30)
+        self.z_queue = queue.Queue(30)
+        self.current_x_avg = 0
+        self.current_y_avg = 0
+        self.current_z_avg = 0
+
+        self.rounded_x_avg = 0
+        self.rounded_y_avg = 0
+        self.rounded_z_avg = 0
+
+        self.last_command_time = datetime.datetime.now()
 
         """
         Constructs tello client to connect to drone
         """
         self.drone = Tello()
+        self.drone.send_command('command')
         self.grounded_flag = True
+        self.test_flag = True
+
 
     def start(self, streams, headsetId=''):
         """
@@ -164,38 +192,97 @@ class Subcribe:
              The values in the array motion match the labels in the array labels return at on_new_data_labels
         For example: {'mot': [33, 0, 0.493859, 0.40625, 0.46875, -0.609375, 0.968765, 0.187503, -0.250004, -76.563667, -19.584995, 38.281834], 'time': 1627457508.2588}
         """
+
+        # read stream data
         data = kwargs.get('data')
-        # print('motion data: {}'.format(data))
         jtopy = json.dumps(data)
         data_json = json.loads(jtopy)
         # print(data_json)
 
-        # using X, Y, Z axis of the accelerometer
+        # parse stream data using X, Y, Z axis of the accelerometer
         if data_json['mot'][0] == 31:
             print('set: {} {} {}'.format(data_json['mot'][6], data_json['mot'][7], data_json['mot'][8]))
 
-        if q1.full():
-            item1 = q1.get()
+        # pop values from queues
+        if self.x_queue.full():
+            item1 = self.x_queue.get()
+        if self.y_queue.full():
+            item1 = self.y_queue.get()
+        if self.z_queue.full():
+            item1 = self.z_queue.get()
 
-        q1.put(data_json['mot'][7])
-        li = list(q1.queue)
-        global current_avg
-        current_avg = mean(li)
-        rounded_avg = round(current_avg, 2)
-        print("The average is ", rounded_avg)
+        # push through queues
+        self.x_queue.put(data_json['mot'][6])
+        self.y_queue.put(data_json['mot'][7])
+        self.z_queue.put(data_json['mot'][8])
 
-        # if head has been held up for awhile
-        if rounded_avg > 0.00:
-            # if grounded, take off
-            if self.grounded_flag:
+        # calculate
+        # global current_x_avg, current_y_avg, current_z_avg, test_flag, event
+
+        y_li = list(self.y_queue.queue)
+        self.current_y_avg = mean(y_li)
+        self.rounded_y_avg = round(self.current_y_avg, 2)
+        # print("The Y average is ", rounded_y_avg)
+
+        x_li = list(self.x_queue.queue)
+        self.current_x_avg = mean(x_li)
+        self.rounded_x_avg = round(self.current_x_avg, 2)
+        # print("The X average is ", rounded_x_avg)
+
+        z_li = list(self.z_queue.queue)
+        self.current_z_avg = mean(z_li)
+        self.rounded_z_avg = round(self.current_z_avg, 2)
+        # print("The Z average is ", rounded_z_avg)
+
+        # if drone is grounded
+        if self.grounded_flag:
+            # check y average for takeoff
+            if self.rounded_y_avg > 0.00:
                 self.drone.send_command('takeoff')
+                print('takeoff.................')
+                time.sleep(2.0)
+                # pass
                 self.grounded_flag = False
-        # if head held down
-        elif rounded_avg < 0.00:
-            # if airborne, land
-            if not self.grounded_flag:
+        # if drone is airbourne
+        elif not self.grounded_flag:
+            c = datetime.datetime.now() - self.last_command_time
+
+            # check y average for landing
+            if self.rounded_y_avg < -0.50:
                 self.drone.send_command('land')
+                print('land.................')
+                time.sleep(2.0)
                 self.grounded_flag = True
+            # check x average for left/stop turn
+            if self.rounded_z_avg < -0.75 and c.seconds > 2:
+                self.drone.send_command("left 20")
+                print("fly left 20................")
+                self.last_command_time = datetime.datetime.now()
+
+            # check x average for right/stop turn
+            elif self.rounded_z_avg > 0.60 and c.seconds > 2:
+                self.drone.send_command("right 20")
+                print("fly right 20................")
+                self.last_command_time = datetime.datetime.now()
+                # pass
+            # check z average for stopping/reversing
+
+            # check z average for starting/thrusting
+
+
+
+        # # if head has been held up for a while
+        # if rounded_avg > 0.00:
+        #     # if grounded, take off
+        #     if self.grounded_flag:
+        #         self.drone.send_command('takeoff')
+        #         self.grounded_flag = False
+        # # if head held down
+        # elif rounded_avg < 0.00:
+        #     # if airborne, land
+        #     if not self.grounded_flag:
+        #         self.drone.send_command('land')
+        #         self.grounded_flag = True
 
     def on_new_dev_data(self, *args, **kwargs):
         """
@@ -262,8 +349,8 @@ def main():
     # Please fill your application clientId and clientSecret before running script
     your_app_client_id = 'lymvMXJlmzSjfmj2JHdkSdtJWIhvWObV9kFY6YaV'
     your_app_client_secret = 'mHRmaSGntxpAAqlvdFHivogOu8PhImyJsj7OSOdJ9np6Ul2a2VT9EcZVd2VO5qJZ77ouHhGogAejx1NaLKU2nJEj9Ri6JPUVhZC5ChZNOshQuBG0kDd8cfBEUitFRxOX'
-
-    s = Subcribe(your_app_client_id, your_app_client_secret)
+    event = threading.Event()
+    s = Subcribe(your_app_client_id, your_app_client_secret, event)
 
     # list data streams
     # streams = ['eeg', 'mot', 'met', 'pow']
