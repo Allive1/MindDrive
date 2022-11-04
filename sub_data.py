@@ -7,17 +7,13 @@ import time
 import threading
 import datetime
 
-# x_queue = queue.Queue(30)
-# y_queue = queue.Queue(30)
-# z_queue = queue.Queue(30)
-# current_x_avg = 0
-# current_y_avg = 0
-# current_z_avg = 0
+start_time = str(datetime.datetime.now())
 
 def flag_switch(event, flag):
     # event.wait(2.0)
     time.sleep(2.0)
     flag = True
+
 
 class Subcribe:
     """
@@ -81,6 +77,7 @@ class Subcribe:
         """
         self.drone = Tello()
         self.drone.send_command('command')
+        # self.log = self.drone.get_log()
         self.grounded_flag = True
         self.test_flag = True
 
@@ -237,10 +234,11 @@ class Subcribe:
         # if drone is grounded
         if self.grounded_flag:
             # check y average for takeoff
-            if self.rounded_y_avg > 0.00:
+            if self.rounded_y_avg > 0.20:
                 self.drone.send_command('takeoff')
                 print('takeoff.................')
                 time.sleep(2.0)
+                self.last_command_time = datetime.datetime.now()
                 # pass
                 self.grounded_flag = False
         # if drone is airbourne
@@ -248,28 +246,43 @@ class Subcribe:
             c = datetime.datetime.now() - self.last_command_time
 
             # check y average for landing
-            if self.rounded_y_avg < -0.50:
+            if -0.63 > self.rounded_y_avg:
                 self.drone.send_command('land')
                 print('land.................')
                 time.sleep(2.0)
                 self.grounded_flag = True
+                self.last_command_time = datetime.datetime.now()
+                # out = open('log/' + start_time + '.txt', 'w')
+                # for stat in self.log:
+                #     stat.print_stats()
+                #     str = stat.return_stats()
+                #     out.write(str)
+            elif self.rounded_y_avg > 0.20 and c.seconds > 1.5:
+                self.drone.send_command('back 40')
+                print('fly back 20.................')
+                self.last_command_time = datetime.datetime.now()
+
             # check x average for left/stop turn
-            if self.rounded_z_avg < -0.75 and c.seconds > 2:
-                self.drone.send_command("left 20")
+            if self.rounded_z_avg < -0.50 and c.seconds > 1.5:
+                self.drone.send_command("left 40")
                 print("fly left 20................")
                 self.last_command_time = datetime.datetime.now()
 
             # check x average for right/stop turn
-            elif self.rounded_z_avg > 0.60 and c.seconds > 2:
-                self.drone.send_command("right 20")
+            elif self.rounded_z_avg > 0.50 and c.seconds > 1.5:
+                self.drone.send_command("right 40")
                 print("fly right 20................")
                 self.last_command_time = datetime.datetime.now()
                 # pass
-            # check z average for stopping/reversing
 
-            # check z average for starting/thrusting
+            # # check z average for stopping/reversing
+            # if -0.50 > self.rounded_y_avg > -0.30:
 
-
+            # # check z average for starting/thrusting
+            if -0.30 > self.rounded_y_avg > -0.63 and c.seconds > 1.5:
+                self.drone.send_command("forward 40")
+                print("fly forward 20................")
+                self.last_command_time = datetime.datetime.now()
 
         # # if head has been held up for a while
         # if rounded_avg > 0.00:
